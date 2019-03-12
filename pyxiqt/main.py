@@ -1,57 +1,131 @@
-from PyQt5.Qt import *
 import sys
+import json
+import os
+import subprocess
+import threading
 from pathlib import Path
 
+from PyQt5.Qt import *
 
-class Xi(QObject):
 
-    def __init__(self, parent=None):
-        super().__init__(parent=parent)
+class XiWorker(object):
+
+    def __init__(self, listener):
+        self.listener = listener
+        self.thread = threading.Thread(target=self.runit)
 
     def start(self):
-        root_path = Path(__file__)
-        root_path = root_path.parent if root_path.is_file() else root_path
-        xi_path = str((root_path / "../bin/xi-core.exe").resolve())
+        if hasattr(self, "thread"):
+            self.thread.start()
 
-        cmd = self.process = QProcess()
-        cmd.setProcessChannelMode(QProcess.MergedChannels)
-        cmd.errorOccurred.connect(self.on_error_ocurred)
-        cmd.readyRead.connect(self.on_ready_read)
-        cmd.started.connect(self.on_started)
-        cmd.start(xi_path)
+    def join(self):
+        if hasattr(self, "thread"):
+            self.thread.join()
 
-    def on_started(self):
-        print('Started process')
+    def runit(self):
+        startupinfo = None
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-    def on_error_ocurred(self, error):
-        if error == QProcess.FailedToStart:
-            print("Error ocurred: FailedToStart")
-        elif error == QProcess.Crashed:
-            print("Error ocurred: Crashed")
-        elif error == QProcess.Timedout:
-            print("Error ocurred: Timedout")
-        elif error == QProcess.WriteError:
-            print("Error ocurred: WriteError")
-        elif error == QProcess.ReadError:
-            print("Error ocurred: ReadError")
-        elif error == QProcess.UnknownError:
-            print("Error ocurred: UnknownError")
+        cwd = Path(__file__)
+        cwd = cwd.parent if cwd.is_file() else cwd
+        cwd = str((cwd / "../bin").resolve())
 
-    def on_ready_read(self):
+        self.process = subprocess.Popen(
+            ["xi-core.exe"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE,
+            startupinfo=startupinfo,
+            shell=True,
+            cwd=cwd
+        )
+
         while True:
-            if self.process.canReadLine():
-                line = bytearray(self.process.readLine()).decode("utf8")
-            else:
-                line = bytearray(self.process.readAll()).decode("utf8")
+            data = os.read(self.process.stdout.fileno(), 2**15)
 
-            if not line.strip():
+            if len(data) > 0:
+                if self.listener:
+                    self.listener.on_data(self, data)
+            else:
+                self.process.stdout.close()
+                self.process.wait()
                 break
 
-            print(line, end='')
+        return_code = self.process.returncode
+        self.listener.on_data(self, f"return_code: {return_code}")
+
+
+class XiListener(QObject):
+
+    line_read = pyqtSignal(str)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.buffer = ""
+        self.encoding = "utf8"
+
+    def on_data(self, async_process, data):
+        try:
+            characters = data.decode(self.encoding)
+        except Exception as e:
+            characters = "[Decode error - output not " + self.encoding + "]\n"
+
+        characters = characters.replace('\r\n', '\n').replace('\r', '\n')
+        self.buffer += characters
+
+        while True:
+            try:
+                index = self.buffer.index("\n")
+            except Exception as e:
+                break
+
+            line = self.buffer[:index]
+            self.buffer = self.buffer[index + 1:]
+            self.line_read.emit(line)
+
+
+class XiServer(QObject):
+
+    started = pyqtSignal()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.listener = XiListener()
+        self.worker = XiWorker(self.listener)
+        self.worker.start()
+        self.listener.line_read.connect(self.on_line_read)
+
+    def on_line_read(self, l):
+        print(l)
+        if l.endswith("xi-core.log"):
+            self.started.emit()
+
+    def send(self, data):
+        request = json.dumps(data).encode("utf-8")
+        print(request)
+        process = self.worker.process
+        process.stdin.write(request)
+        res = process.communicate()[0]
+        print(res)
+
+
+class App(QApplication):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.xi = XiServer()
+        self.xi.started.connect(self.on_started)
+
+    def on_started(self):
+        print("Xi Server listening...")
+        self.xi.send({
+            "method": "new_view",
+            "file_path": __file__
+        })
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    x = Xi()
-    x.start()
+    app = App(sys.argv)
     sys.exit(app.exec_())
