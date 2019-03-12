@@ -17,7 +17,7 @@ class Xi(QObject):
         self.process.readyReadStandardOutput.connect(self.on_ready_read_standard_output)
         self.process.readyReadStandardError.connect(self.on_ready_read_standard_error)
         self.process.errorOccurred.connect(self.on_error_ocurred)
-        self.process.start(str(root_path / "../bin/xi-core.exe").resolve())
+        self.process.start(str((root_path / "../bin/xi-core.exe").resolve()))
         self.process.waitForStarted()
 
     def on_error_ocurred(self, error):
@@ -61,6 +61,6 @@ class Xi(QObject):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    x = Foo()
+    x = Xi()
     x.start()
     sys.exit(app.exec_())
