@@ -11,14 +11,17 @@ class Xi(QObject):
     def start(self):
         root_path = Path(__file__)
         root_path = root_path.parent if root_path.is_file() else root_path
+        xi_path = str((root_path / "../bin/xi-core.exe").resolve())
 
-        self.process = QProcess()
-        self.process.readyRead.connect(self.on_ready_read)
-        self.process.readyReadStandardOutput.connect(self.on_ready_read_standard_output)
-        self.process.readyReadStandardError.connect(self.on_ready_read_standard_error)
-        self.process.errorOccurred.connect(self.on_error_ocurred)
-        self.process.start(str((root_path / "../bin/xi-core.exe").resolve()))
-        self.process.waitForStarted()
+        cmd = self.process = QProcess()
+        cmd.setProcessChannelMode(QProcess.MergedChannels)
+        cmd.errorOccurred.connect(self.on_error_ocurred)
+        cmd.readyRead.connect(self.on_ready_read)
+        cmd.started.connect(self.on_started)
+        cmd.start(xi_path)
+
+    def on_started(self):
+        print('Started process')
 
     def on_error_ocurred(self, error):
         if error == QProcess.FailedToStart:
@@ -34,29 +37,17 @@ class Xi(QObject):
         elif error == QProcess.UnknownError:
             print("Error ocurred: UnknownError")
 
-    def read_lines(self):
+    def on_ready_read(self):
         while True:
             if self.process.canReadLine():
-                line = self.process.readLine().decode("utf8")
+                line = bytearray(self.process.readLine()).decode("utf8")
             else:
-                line = self.process.readAll()
+                line = bytearray(self.process.readAll()).decode("utf8")
 
-            if line.isEmpty():
+            if not line.strip():
                 break
 
-            print(line)
-
-    def on_ready_read_standard_output(self):
-        print('on_ready_read_standard_output')
-        self.read_lines()
-
-    def on_ready_read_standard_error(self):
-        print('on_ready_read_standard_error')
-        self.read_lines()
-
-    def on_ready_read(self):
-        print("on_ready_read")
-        self.read_lines()
+            print(line, end='')
 
 
 if __name__ == "__main__":
